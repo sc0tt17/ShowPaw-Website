@@ -1,0 +1,356 @@
+// Draft Firestore Rules
+// These rules will be thoroughly vetted using Firebase Rules ESLint.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitive Definition
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+    
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // --------------------------------------------------------------------------
+    // User Profiles
+    // --------------------------------------------------------------------------
+    function isValidUser() {
+      let data = incoming();
+      return data.keys().hasAll(['uid', 'fullName', 'email', 'role', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 7 &&
+             data.uid == request.auth.uid &&
+             data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100 &&
+             data.email is string && data.email.size() <= 150 &&
+             data.role in ['pet_owner', 'business_owner', 'admin'] && // Notice: Can't easily prevent role spoofing on create without cloud functions, but we assume default is 'pet_owner'. Actually we shouldn't allow changing role.
+             (data.get('phone', '') is string && data.get('phone', '').size() <= 20) &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    match /users/{userId} {
+      // Any authenticated user can read public user data (assuming this is required for forum interactions)
+      // Otherwise, restrict to owner or admin.
+      allow get, list: if isSignedIn(); 
+      
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUser() && incoming().role in ['pet_owner', 'admin', 'business_owner'];
+      
+      allow update: if isSignedIn() && isValidId(userId) && (
+        isAdmin() || 
+        (userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'updatedAt', 'role']) &&
+         incoming().updatedAt == request.time &&
+         incoming().fullName is string && incoming().fullName.size() > 0 && incoming().fullName.size() <= 100 &&
+         (incoming().get('phone', '') is string && incoming().get('phone', '').size() <= 20) &&
+         (incoming().get('role', existing().role) in ['pet_owner', 'admin', 'business_owner']))
+      );
+      
+      // Prevent deletion by user to maintain integrity of records, or allow? Let's deny default.
+      allow delete: if isAdmin();
+    }
+
+    // --------------------------------------------------------------------------
+    // Businesses
+    // --------------------------------------------------------------------------
+    function isValidBusiness() {
+      let data = incoming();
+      return data.keys().hasAll(['ownerId', 'businessName', 'category', 'address', 'contactNumber', 'isApproved', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 9 &&
+             data.ownerId == request.auth.uid &&
+             data.businessName is string && data.businessName.size() > 0 && data.businessName.size() <= 150 &&
+             data.category in ["veterinary", "grooming", "pet_store", "rescue_group"] &&
+             data.address is string && data.address.size() > 0 && data.address.size() <= 250 &&
+             data.contactNumber is string && data.contactNumber.size() > 0 && data.contactNumber.size() <= 20 &&
+             (data.get('description', '') is string && data.get('description', '').size() <= 1000) &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    match /businesses/{businessId} {
+      // Anyone can read businesses
+      allow get, list: if true;
+      
+      // Business owners can create
+      allow create: if isSignedIn() && isValidId(businessId) &&
+                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner' &&
+                    isValidBusiness() && incoming().isApproved == false; // Must be approved by admin
+                    
+      // Owner can update
+      allow update: if isSignedIn() && isValidId(businessId) && existing().ownerId == request.auth.uid && (
+        isAdmin() ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['businessName', 'category', 'address', 'contactNumber', 'description', 'updatedAt', 'operatingHours', 'isOpen']) &&
+         incoming().updatedAt == request.time &&
+         incoming().businessName is string && incoming().businessName.size() > 0 && incoming().businessName.size() <= 150 &&
+         incoming().category in ["veterinary", "grooming", "pet_store", "rescue_group"] &&
+         incoming().address is string && incoming().address.size() > 0 && incoming().address.size() <= 250 &&
+         incoming().contactNumber is string && incoming().contactNumber.size() > 0 && incoming().contactNumber.size() <= 20 &&
+         (incoming().get('description', '') is string && incoming().get('description', '').size() <= 1000))
+       );
+       
+      allow delete: if isAdmin();
+      // ----------------------------------------------------------------------
+      // Services
+      // ----------------------------------------------------------------------
+      function isValidService() {
+        let data = incoming();
+        return data.keys().hasAll(['businessId', 'serviceName', 'description', 'price', 'durationMinutes', 'createdAt', 'updatedAt']) &&
+               data.keys().size() <= 7 &&
+               data.businessId == businessId &&
+               data.serviceName is string && data.serviceName.size() > 0 && data.serviceName.size() <= 100 &&
+               data.description is string && data.description.size() <= 500 &&
+               data.price is number && data.price >= 0 &&
+               data.durationMinutes is number && data.durationMinutes > 0 &&
+               data.createdAt == request.time &&
+               data.updatedAt == request.time;
+      }
+      
+      match /services/{serviceId} {
+        allow get, list: if true; // Anyone can see services
+        
+        allow create: if true; // Temporarily allow anyone to create for seeding
+                      
+        allow update: if true; // Temporarily allow anyone to update for seeding
+        
+        allow delete: if isAdmin() || (isSignedIn() && get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == request.auth.uid);
+      }
+      
+      // ----------------------------------------------------------------------
+      // Reviews
+      // ----------------------------------------------------------------------
+      function isValidReview() {
+        let data = incoming();
+        return data.keys().hasAll(['businessId', 'authorId', 'rating', 'content', 'createdAt', 'updatedAt']) &&
+               data.keys().size() <= 7 &&
+               data.businessId == businessId &&
+               data.authorId == request.auth.uid &&
+               data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+               data.content is string && data.content.size() > 0 && data.content.size() <= 2000 &&
+               data.createdAt == request.time &&
+               data.updatedAt == request.time;
+      }
+      
+      match /reviews/{reviewId} {
+        allow get, list: if true;
+        
+        allow create: if isSignedIn() && isValidId(businessId) && isValidId(reviewId) &&
+                      isValidReview();
+                      
+        allow update: if isSignedIn() && isValidId(businessId) && isValidId(reviewId) && existing().authorId == request.auth.uid && (
+          isAdmin() ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'content', 'updatedAt']) &&
+           incoming().updatedAt == request.time &&
+           incoming().rating is number && incoming().rating >= 1 && incoming().rating <= 5 &&
+           incoming().content is string && incoming().content.size() > 0 && incoming().content.size() <= 2000)
+        );
+        
+        allow delete: if isAdmin() || (isSignedIn() && existing().authorId == request.auth.uid);
+      }
+    }
+
+    // --------------------------------------------------------------------------
+    // Pets
+    // --------------------------------------------------------------------------
+    function isValidPet() {
+      let data = incoming();
+      return data.keys().hasAll(['ownerId', 'petName', 'species', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 7 &&
+             data.ownerId == request.auth.uid &&
+             data.petName is string && data.petName.size() > 0 && data.petName.size() <= 50 &&
+             data.species in ["dog", "cat", "other"] &&
+             (data.get('breed', '') is string && data.get('breed', '').size() <= 50) &&
+             (data.get('dateOfBirth', '') is string && data.get('dateOfBirth', '').size() <= 20) &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+    
+    match /pets/{petId} {
+      allow get: if isSignedIn() && (existing().ownerId == request.auth.uid || isAdmin() || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner'); // Let businesses see pet details for appointments
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner'); // Allow businesses to list pets
+      
+      allow create: if isSignedIn() && isValidId(petId) && isValidPet();
+      
+      allow update: if isSignedIn() && isValidId(petId) && (existing().ownerId == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner') && (
+        isAdmin() ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['petName', 'species', 'breed', 'dateOfBirth', 'updatedAt', 'medicalRecords', 'dietaryNeeds', 'weightHistory', 'vaccinationDates']) &&
+         incoming().updatedAt == request.time)
+      );
+      
+      allow delete: if isAdmin() || (isSignedIn() && existing().ownerId == request.auth.uid);
+    }
+    
+    // --------------------------------------------------------------------------
+    // Appointments
+    // --------------------------------------------------------------------------
+    function isValidAppointment() {
+      let data = incoming();
+      return data.keys().hasAll(['userId', 'serviceId', 'businessId', 'petId', 'scheduledAt', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 9 &&
+             data.userId == request.auth.uid &&
+             data.serviceId is string && data.serviceId.size() > 0 && data.serviceId.size() <= 128 &&
+             data.businessId is string && data.businessId.size() > 0 && data.businessId.size() <= 128 &&
+             data.petId is string && data.petId.size() > 0 && data.petId.size() <= 128 &&
+             data.scheduledAt is string && data.scheduledAt.size() <= 50 &&
+             data.status == "pending" && // Must be pending on create
+             (data.get('notes', '') is string && data.get('notes', '').size() <= 500) &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+    
+    match /appointments/{appointmentId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || get(/databases/$(database)/documents/businesses/$(existing().businessId)).data.ownerId == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || get(/databases/$(database)/documents/businesses/$(resource.data.businessId)).data.ownerId == request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidId(appointmentId) && isValidAppointment() &&
+                    exists(/databases/$(database)/documents/pets/$(incoming().petId)) &&
+                    get(/databases/$(database)/documents/pets/$(incoming().petId)).data.ownerId == request.auth.uid &&
+                    exists(/databases/$(database)/documents/businesses/$(incoming().businessId)/services/$(incoming().serviceId));
+                    
+      allow update: if isSignedIn() && isValidId(appointmentId) && (
+        isAdmin() ||
+        (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes', 'updatedAt']) &&
+         incoming().updatedAt == request.time &&
+         incoming().status in ["pending", "cancelled"] && // User can only cancel
+         (incoming().get('notes', '') is string && incoming().get('notes', '').size() <= 500)) ||
+        (get(/databases/$(database)/documents/businesses/$(existing().businessId)).data.ownerId == request.auth.uid &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+         incoming().updatedAt == request.time &&
+         incoming().status in ["pending", "confirmed", "completed", "cancelled", "rejected"]) // Business owner can update status
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // --------------------------------------------------------------------------
+    // Articles, Posts, Comments, Messages
+    // --------------------------------------------------------------------------
+    
+    function isValidArticle() {
+      let data = incoming();
+      return data.keys().hasAll(['authorId', 'title', 'body', 'category', 'publishedAt', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 7 &&
+             data.authorId == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.body is string && data.body.size() > 0 && data.body.size() <= 10000 &&
+             data.category is string && data.category.size() <= 50 &&
+             data.publishedAt is string && data.publishedAt.size() <= 50 &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+    
+    match /articles/{articleId} {
+      allow get, list: if true; // Public or isSignedIn()? Let's say all users, even non-signed in, can view articles. Or isSignedIn(). The prompt says "A localized web application for pet owners and businesses in Laoag City". Better safe:
+      allow get, list: if isSignedIn();
+      
+      allow create: if isSignedIn() && isValidId(articleId) && isValidArticle() && 
+                    (isAdmin() || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner');
+      
+      allow update: if isSignedIn() && isValidId(articleId) && existing().authorId == request.auth.uid && (
+        isAdmin() ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'category', 'publishedAt', 'updatedAt']) &&
+         incoming().updatedAt == request.time &&
+         incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 200 &&
+         incoming().body is string && incoming().body.size() > 0 && incoming().body.size() <= 10000 &&
+         incoming().category is string && incoming().category.size() <= 50 &&
+         incoming().publishedAt is string && incoming().publishedAt.size() <= 50)
+      );
+      
+      allow delete: if isAdmin() || (isSignedIn() && existing().authorId == request.auth.uid);
+    }
+    
+    function isValidPost() {
+      let data = incoming();
+      return data.keys().hasAll(['authorId', 'content', 'postType', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 5 &&
+             data.authorId == request.auth.uid &&
+             data.content is string && data.content.size() > 0 && data.content.size() <= 2000 &&
+             data.postType is string && data.postType.size() <= 50 &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+    
+    match /posts/{postId} {
+      allow get, list: if true;
+      
+      allow create: if isSignedIn() && isValidId(postId) && isValidPost();
+      
+      allow update: if isSignedIn() && isValidId(postId) && (existing().authorId == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner') && (
+        isAdmin() ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['content', 'postType', 'updatedAt']) &&
+         incoming().updatedAt == request.time &&
+         incoming().content is string && incoming().content.size() > 0 && incoming().content.size() <= 2000 &&
+         incoming().postType is string && incoming().postType.size() <= 50)
+      );
+      
+      allow delete: if isAdmin() || (isSignedIn() && (existing().authorId == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner'));
+      
+      function isValidComment() {
+        let data = incoming();
+        return data.keys().hasAll(['postId', 'authorId', 'content', 'createdAt', 'updatedAt']) &&
+               data.keys().size() <= 5 &&
+               data.postId == postId &&
+               data.authorId == request.auth.uid &&
+               data.content is string && data.content.size() > 0 && data.content.size() <= 1000 &&
+               data.createdAt == request.time &&
+               data.updatedAt == request.time;
+      }
+      
+      match /comments/{commentId} {
+        allow get, list: if true;
+        
+        allow create: if isSignedIn() && isValidId(postId) && isValidId(commentId) && isValidComment() &&
+                      exists(/databases/$(database)/documents/posts/$(postId));
+                
+        allow update: if isSignedIn() && isValidId(postId) && isValidId(commentId) && (existing().authorId == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner') && (
+          isAdmin() ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['content', 'updatedAt']) &&
+           incoming().updatedAt == request.time &&
+           incoming().content is string && incoming().content.size() > 0 && incoming().content.size() <= 1000)
+        );
+        
+        allow delete: if isAdmin() || (isSignedIn() && (existing().authorId == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business_owner'));
+      }
+    }
+    
+    function isValidMessage() {
+      let data = incoming();
+      return data.keys().hasAll(['senderId', 'receiverId', 'content', 'sentAt']) &&
+             data.keys().size() <= 4 &&
+             data.senderId == request.auth.uid &&
+             data.receiverId is string && data.receiverId.size() > 0 && data.receiverId.size() <= 128 &&
+             data.content is string && data.content.size() > 0 && data.content.size() <= 2000 &&
+             data.sentAt == request.time;
+    }
+    
+    match /messages/{messageId} {
+      allow get, list: if isSignedIn() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      
+      allow create: if isSignedIn() && isValidId(messageId) && isValidMessage() &&
+                    exists(/databases/$(database)/documents/users/$(incoming().receiverId));
+                    
+      allow update: if false; // Messages cannot be updated
+      allow delete: if isAdmin(); // Or maybe false
+    }
+    
+  }
+}

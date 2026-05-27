@@ -1,0 +1,6 @@
+{
+  "name": "ShowPaw",
+  "description": "A localized web application for pet owners and businesses in Laoag City to find pet services, book appointments, and interact in an online community.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

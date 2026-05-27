@@ -1,0 +1,174 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the application (pet owner, business owner, or admin).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Auth UID" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["pet_owner", "business_owner", "admin"] },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["uid", "fullName", "email", "role", "createdAt", "updatedAt"]
+    },
+    "Business": {
+      "title": "Business",
+      "description": "A pet service business listed on ShowPaw.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "businessName": { "type": "string" },
+        "category": { "type": "string", "enum": ["veterinary", "grooming", "pet_store", "rescue_group"] },
+        "address": { "type": "string" },
+        "contactNumber": { "type": "string" },
+        "description": { "type": "string" },
+        "isApproved": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["ownerId", "businessName", "category", "address", "contactNumber", "isApproved", "createdAt", "updatedAt"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "A specific service offered by a business.",
+      "type": "object",
+      "properties": {
+        "businessId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "durationMinutes": { "type": "number" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["businessId", "serviceName", "description", "price", "durationMinutes", "createdAt", "updatedAt"]
+    },
+    "Pet": {
+      "title": "Pet",
+      "description": "A pet owned by a user.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "petName": { "type": "string" },
+        "species": { "type": "string", "enum": ["dog", "cat", "other"] },
+        "breed": { "type": "string" },
+        "dateOfBirth": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["ownerId", "petName", "species", "createdAt", "updatedAt"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "A booking request made by a pet owner.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "businessId": { "type": "string" },
+        "petId": { "type": "string" },
+        "scheduledAt": { "type": "string", "format": "timestamp" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled", "rejected"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["userId", "serviceId", "businessId", "petId", "scheduledAt", "status", "createdAt", "updatedAt"]
+    },
+    "Article": {
+      "title": "Article",
+      "description": "An educational article about pet care.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "category": { "type": "string" },
+        "publishedAt": { "type": "string", "format": "timestamp" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["authorId", "title", "body", "category", "publishedAt", "createdAt", "updatedAt"]
+    },
+    "Post": {
+      "title": "Post",
+      "description": "A community forum post.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "content": { "type": "string" },
+        "postType": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["authorId", "content", "postType", "createdAt", "updatedAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "A comment on a community forum post.",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "updatedAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["postId", "authorId", "content", "createdAt", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A private message between users.",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "content": { "type": "string" },
+        "sentAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["senderId", "receiverId", "content", "sentAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles."
+    },
+    "/businesses/{businessId}": {
+      "schema": { "$ref": "#/entities/Business" },
+      "description": "Stores business profiles."
+    },
+    "/businesses/{businessId}/services/{serviceId}": {
+      "schema": { "$ref": "#/entities/Service" },
+      "description": "Stores services offered by a specific business."
+    },
+    "/pets/{petId}": {
+      "schema": { "$ref": "#/entities/Pet" },
+      "description": "Stores pets associated with their owners."
+    },
+    "/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Stores booking requests across all businesses and users."
+    },
+    "/articles/{articleId}": {
+      "schema": { "$ref": "#/entities/Article" },
+      "description": "Stores educational articles."
+    },
+    "/posts/{postId}": {
+      "schema": { "$ref": "#/entities/Post" },
+      "description": "Stores community forum posts."
+    },
+    "/posts/{postId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Stores comments for a specific post."
+    },
+    "/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Stores private messages between users."
+    }
+  }
+}
